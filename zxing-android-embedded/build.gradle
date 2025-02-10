@@ -1,23 +1,48 @@
 apply plugin: 'com.android.library'
 apply plugin: 'maven-publish'
-apply plugin: 'com.jfrog.bintray'
-
+apply plugin: 'signing'
 
 ext.artifactId = 'zxing-android-embedded'
+
+
+// Publishing config from https://getstream.io/blog/publishing-libraries-to-mavencentral-2021/
+ext["signing.keyId"] = ''
+ext["signing.password"] = ''
+ext["signing.secretKeyRingFile"] = ''
+ext["ossrhUsername"] = ''
+ext["ossrhPassword"] = ''
+ext["sonatypeStagingProfileId"] = ''
+
+File secretPropsFile = project.rootProject.file('local.properties')
+if (secretPropsFile.exists()) {
+    Properties p = new Properties()
+    p.load(new FileInputStream(secretPropsFile))
+    p.each { name, value ->
+        ext[name] = value
+    }
+} else {
+    ext["signing.keyId"] = System.getenv('SIGNING_KEY_ID')
+    ext["signing.password"] = System.getenv('SIGNING_PASSWORD')
+    ext["signing.secretKeyRingFile"] = System.getenv('SIGNING_SECRET_KEY_RING_FILE')
+    ext["ossrhUsername"] = System.getenv('OSSRH_USERNAME')
+    ext["ossrhPassword"] = System.getenv('OSSRH_PASSWORD')
+    ext["sonatypeStagingProfileId"] = System.getenv('SONATYPE_STAGING_PROFILE_ID')
+}
+
 
 dependencies {
     api project.zxingCore
 
-    api 'com.android.support:support-v4:27.1.1'
+    implementation 'androidx.core:core:1.6.0'
+    implementation 'androidx.fragment:fragment:1.3.6'
 
-    testImplementation 'junit:junit:4.12'
-    testImplementation "org.mockito:mockito-core:1.9.5"
+    testImplementation 'junit:junit:4.13.1'
+    testImplementation 'org.mockito:mockito-core:1.9.5'
 }
 
 android {
     resourcePrefix 'zxing_'
     compileSdkVersion project.androidTargetSdk
-    buildToolsVersion project.androidBuildTools
 
     sourceSets {
         main {
@@ -26,7 +51,7 @@ android {
             res.srcDirs = ['res-orig', 'res']
             assets.srcDirs = ['assets']
         }
-        test.setRoot('test');
+        test.setRoot('test')
     }
 
     // This is bad practice - we should fix the warnings instead.
@@ -37,16 +62,17 @@ android {
     }
 
     compileOptions {
-        sourceCompatibility JavaVersion.VERSION_1_7
-        targetCompatibility JavaVersion.VERSION_1_7
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
     }
 
     testOptions {
         // We test with primitives such as Rect, and rely on their default behaviour working.
         unitTests.returnDefaultValues = true
     }
+
     defaultConfig {
-        minSdkVersion 14
+        minSdkVersion 19
     }
 
     buildTypes {
@@ -65,15 +91,43 @@ task sourceJar(type: Jar) {
     from android.sourceSets.main.java.srcDirs
 }
 
-publishing {
-    publications {
-        // We need this check to cover Android Studio gradle sync
-        if(project.tasks.findByPath('bundleRelease') != null) {
+project.afterEvaluate {
+    publishing {
+        publications {
             maven(MavenPublication) {
-                artifact bundleRelease
+                artifact bundleReleaseAar
                 artifactId project.artifactId
 
                 artifact sourceJar
+                
+                pom {
+                    name = project.artifactId
+                    description = 'Barcode scanner library for Android, based on the ZXing decoder'
+                    url = 'https://github.com/journeyapps/zxing-android-embedded'
+
+                    licenses {
+                        license {
+                            name = 'The Apache License, Version 2.0'
+                            url = 'https://github.com/journeyapps/zxing-android-embedded/blob/master/COPYING'
+                        }
+                    }
+
+                    developers {
+                        developer {
+                            id = ''
+                            name = 'Ralf Kistner'
+                            email = 'ralf@journeyapps.com'
+                            organization = 'Journey Mobile, Inc'
+                            organizationUrl = 'https://journeyapps.com'
+                        }
+                    }
+                    scm {
+                        connection = 'scm:git:github.com/journeyapps/zxing-android-embedded.git'
+                        developerConnection = 'scm:git:ssh://github.com/journeyapps/zxing-android-embedded.git'
+                        url = 'https://github.com/journeyapps/zxing-android-embedded'
+                    }
+                }
+
 
                 pom.withXml {
                     // HACK to add dependencies to POM.
@@ -81,35 +135,31 @@ publishing {
                     // remove this section.
                     def deps = asNode().appendNode('dependencies')
 
-                    project.configurations.compile.allDependencies.each { dep ->
+                    project.configurations.api.allDependencies.each { dep ->
                         def node = deps.appendNode('dependency')
                         node.appendNode('groupId', dep.group)
                         node.appendNode('artifactId', dep.name)
                         node.appendNode('version', dep.version)
-                        node.appendNode('scope', 'compile')
+                        node.appendNode('scope', 'api')
                     }
 
                 }
+            }
+        }
 
+        repositories {
+            maven {
+                name = "sonatype"
+                url = "https://oss.sonatype.org/service/local/staging/deploy/maven2/"
+                credentials {
+                    username ossrhUsername
+                    password ossrhPassword
+                }
             }
         }
     }
 }
 
-// To release, place bintray_user and bintray_key properties in ~/.gradle/gradle.properties,
-// and run ./gradlew clean assembleRelease bintrayUpload
-
-if(project.hasProperty('bintray_user') && project.hasProperty('bintray_key')) {
-    bintray {
-        user = bintray_user
-        key = bintray_key
-        publications = ['maven']
-        publish = true
-        pkg {
-            userOrg = 'journeyapps'
-            repo = 'maven'
-            name = 'zxing-android-embedded'
-        }
-    }
+signing {
+    sign publishing.publications
 }
-
